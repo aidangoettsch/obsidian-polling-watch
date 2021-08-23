@@ -1,7 +1,7 @@
 {
-  "id": "your-obsidian-plugin",
-  "name": "Obsidian Plugin Template",
-  "description": "A Simple Template for Plugins",
-  "isDesktopOnly": false,
+  "id": "obsidian-polling-watch",
+  "name": "Obsidian Polling Watch",
+  "description": "Polling watch backend for the Obsidian vault",
+  "isDesktopOnly": true,
   "js": "main.js"
 }

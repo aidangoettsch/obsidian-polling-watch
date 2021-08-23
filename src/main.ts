@@ -1,26 +1,72 @@
-import { App, Plugin, PluginSettingTab, Setting } from "obsidian";
+import {App, Plugin, PluginManifest, PluginSettingTab, Setting, TAbstractFile} from "obsidian";
+import * as path from "path"
+import * as fs from "fs/promises"
+import { FSWatcher } from "fs"
 
-export default class MyPlugin extends Plugin {
-  // This field stores your plugin settings.
-  setting: MyPluginSettings;
+declare module "obsidian" {
+  export interface Watcher {
+    resolvedPath: string
+    watcher: FSWatcher
+  }
 
-  onInit() {}
+  export interface DataAdapter {
+    basePath: string
+    watchers: { [path: string]: Watcher }
+  }
 
+  export interface Vault {
+  }
+}
+
+export default class PollingWatch extends Plugin {
+  private setting!: MyPluginSettings;
+  private pollTimer!: number;
   async onload() {
     console.log("Plugin is Loading...");
 
-    // This snippet of code is used to load pluging settings from disk (if any)
-    // and then add the setting tab in the Obsidian Settings panel.
-    // If your plugin does not use settings, you can delete these two lines.
     this.setting = (await this.loadData()) || {
-      someConfigData: 1,
-      anotherConfigData: "defaultValue",
+      pollInterval: 2000,
     };
     this.addSettingTab(new MyPluginSettingsTab(this.app, this));
+    this.pollTimer = window.setInterval(() => this.poll(), this.setting.pollInterval)
+    // await this.poll()
   }
 
-  onunload() {
-    console.log("Plugin is Unloading...");
+  async poll() {
+    console.log(this.app.vault)
+
+    const watchers = this.app.vault.adapter.watchers
+    await Promise.all(Object.keys(watchers).map(async normalizedPath => {
+      if (normalizedPath.startsWith(".obsidian")) return
+
+      const { resolvedPath } = watchers[normalizedPath]
+
+      const listing = await fs.readdir(resolvedPath, {
+        withFileTypes: true
+      })
+
+      for (const f of listing) {
+        console.log(`updating ${path.join(normalizedPath, f.name)}`)
+        // @ts-ignore
+        this.app.vault.adapter.onFileChange(path.join(normalizedPath, f.name))
+      }
+    }))
+  }
+
+  async setPollInterval(value: number): Promise<void> {
+    this.setting.pollInterval = value;
+    await this.saveData(this.setting);
+
+    window.clearInterval(this.pollTimer)
+    this.pollTimer = window.setInterval(() => this.poll(), this.setting.pollInterval)
+  }
+
+  onunload(): void {
+    window.clearInterval(this.pollTimer)
+  }
+
+  get pollInterval(): number {
+    return this.setting.pollInterval
   }
 }
 
@@ -29,30 +75,27 @@ export default class MyPlugin extends Plugin {
  * as you wish by adding fields and all the data you need.
  */
 interface MyPluginSettings {
-  someConfigData: number;
-  anotherConfigData: string;
+  pollInterval: number;
 }
 
 class MyPluginSettingsTab extends PluginSettingTab {
-  plugin: MyPlugin;
+  plugin: PollingWatch;
 
-  constructor(app: App, plugin: MyPlugin) {
+  constructor(app: App, plugin: PollingWatch) {
     super(app, plugin);
     this.plugin = plugin;
   }
 
   display(): void {
     const { containerEl } = this;
-    const settings = this.plugin.setting;
-    // This is just an example of a setting controll.
+
     new Setting(containerEl)
-      .setName("Setting Name")
-      .setDesc("Setting description")
+      .setName("Poll Interval")
+      .setDesc("Interval between disk accesses")
       .addText((text) =>
-        text.setValue(String(settings.someConfigData)).onChange((value) => {
+        text.setValue(String(this.plugin.pollInterval)).onChange(async (value) => {
           if (!isNaN(Number(value))) {
-            settings.someConfigData = Number(value);
-            this.plugin.saveData(settings);
+            await this.plugin.setPollInterval(Number(value))
           }
         })
       );
